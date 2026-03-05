@@ -14,6 +14,7 @@ on:
       - '**/*.naavrewf'
       - "n2res/**"
   workflow_dispatch:
+    types: [run-external-workflow]
     # FILL THIS IN TO GET IT TO WORK
 
 jobs:
