@@ -1,0 +1,83 @@
+name: Build_and_redeploy_with_N2R
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - '**/*.ipynb'
+      - '**/*.naavrewf'
+      - "n2res/**"
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - '**/*.ipynb'
+      - '**/*.naavrewf'
+      - "n2res/**"
+  workflow_dispatch:
+    # FILL THIS IN TO GET IT TO WORK
+
+jobs:
+  notebook2rest-setup:
+    runs-on: ubuntu-latest
+
+    env:
+      AWS_REGION: eu-north-1
+      EKS_CLUSTER_NAME: notebook2rest_cluster
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      REPOSITORY: notebook2rest/api
+      IMAGE_TAG: ${{ github.sha }}-${{ github.run_number }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout notebook repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Run Notebook2REST
+      - name: Install notebook2rest
+        run: |
+          git clone https://github.com/Apipilikas/notebook2rest.git
+
+      - name: Run notebook2rest
+        run: |
+          cd notebook2rest
+          python3 src/main.py ..
+
+      # AWS setup
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # ECR login
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Build & push the image
+      - name: Build, tag, and push docker image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          docker build -t $REGISTRY/$REPOSITORY:$IMAGE_TAG notebook2rest/build
+          docker push $REGISTRY/$REPOSITORY:$IMAGE_TAG
+
+      # Points it to the AWS cluster
+      - name: Configure kubeconfig
+        run: aws eks update-kubeconfig --region $AWS_REGION --name $EKS_CLUSTER_NAME
+
+      # Redeploys helm chart
+      - name: Deploy Helm chart
+        run: |
+          helm upgrade --install my-api ./n2res --namespace default --set image.repository=259361438396.dkr.ecr.eu-north-1.amazonaws.com/notebook2rest/api --set image.tag=$IMAGE_TAG
+         # helm upgrade --install my-api ./n2res --namespace default --set image.repository=$REGISTRY/$REPOSITORY --set image.tag=$IMAGE_TAG
