@@ -34,7 +34,7 @@ on:
       - '**/*.ipynb'
 
 jobs:
-  deploy-to-aws:
+  setup-notebook2rest:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout My Notebooks
