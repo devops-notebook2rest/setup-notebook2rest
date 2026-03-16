@@ -1,87 +1,93 @@
-name: Build_and_redeploy_with_N2R
+name: Build and deploy notebook2rest to AWS
+description: 'Converts Jupyter Notebooks to a REST API, containerizes it, and deploys to AWS.'
+branding:
+  icon: 'upload-cloud'
+  color: 'blue'
 
-on:
-  push:
-    branches: [ "main" ]
-    paths:
-      - '**/*.ipynb'
-      - '**/*.naavrewf'
-      - "n2res/**"
-  pull_request:
-    branches: [ "main" ]
-    paths:
-      - '**/*.ipynb'
-      - '**/*.naavrewf'
-      - "n2res/**"
-  workflow_dispatch:
+inputs:
+  aws_access_key_id:
+    description: 'AWS Access Key ID'
+    required: true
+  aws_secret_access_key:
+    description: 'AWS Secret Access Key'
+    required: true
+  aws_region:
+    description: 'AWS Region'
+    required: true
+  eks_cluster_name:
+    description: 'The name of your AWS EKS Cluster'
+    required: true
+    default: 'notebook2rest_cluster'
+  ecr_repository:
+    description: 'The ECR repository name'
+    required: true
+    default: 'notebook2rest/api'
 
-jobs:
-  notebook2rest-setup:
-    runs-on: ubuntu-latest
+runs:
+  using: "composite"
 
-    env:
-      AWS_REGION: eu-north-1
-      EKS_CLUSTER_NAME: notebook2rest_cluster
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      REPOSITORY: notebook2rest/api
-      IMAGE_TAG: ${{ github.sha }}-${{ github.run_number }}
+  steps:
+    - name: Checkout notebook repository
+      uses: actions/checkout@v4
 
-    permissions:
-      id-token: write
-      contents: read
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
 
-    steps:
-      - name: Checkout notebook repository
-        uses: actions/checkout@v4
+    # Run Notebook2REST
+    - name: Install notebook2rest
+      shell: bash
+      run: |
+        git clone https://github.com/devops-notebook2rest/notebook2rest.git
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+    - name: Run notebook2rest
+      shell: bash
+      run: |
+        cd notebook2rest
+        python3 src/main.py ..
 
-      # Run Notebook2REST
-      - name: Install notebook2rest
-        run: |
-          git clone https://github.com/devops-notebook2rest/notebook2rest.git
+    # AWS setup
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ inputs.aws_access_key_id }}
+        aws-secret-access-key: ${{ inputs.aws_secret_access_key }}
+        aws-region: ${{ inputs.aws_region }}
 
-      - name: Run notebook2rest
-        run: |
-          cd notebook2rest
-          python3 src/main.py ..
+    # ECR login
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
 
-      # AWS setup
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+    # Build & push the image
+    - name: Build, tag, and push docker image
+      shell: bash
+      env:
+        REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        EKS_CLUSTER_NAME: ${{inputs.eks_cluster_name}}
+        REPOSITORY: ${{inputs.ecr_repository}}
+        IMAGE_TAG: ${{ github.sha }}-${{ github.run_number }}
+      run: |
+        docker build \
+          --build-arg GIT_SHA=${{ github.sha }} \
+          --build-arg BUILD_NUMBER=${{ github.run_number }} \
+          --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
+          -t $REGISTRY/$REPOSITORY:$IMAGE_TAG notebook2rest/build
+        docker push $REGISTRY/$REPOSITORY:$IMAGE_TAG
 
-      # ECR login
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
+    # Points it to the AWS cluster
+    - name: Configure kubeconfig
+      shell: bash
+      run: aws eks update-kubeconfig --region ${{inputs.aws_region}} --name ${{inputs.eks_cluster_name}}
 
-      # Build & push the image
-      - name: Build, tag, and push docker image
-        env:
-          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        run: |
-          docker build \
-            --build-arg GIT_SHA=${{ github.sha }} \
-            --build-arg BUILD_NUMBER=${{ github.run_number }} \
-            --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
-            -t $REGISTRY/$REPOSITORY:$IMAGE_TAG notebook2rest/build
-          docker push $REGISTRY/$REPOSITORY:$IMAGE_TAG
-
-      # Points it to the AWS cluster
-      - name: Configure kubeconfig
-        run: aws eks update-kubeconfig --region $AWS_REGION --name $EKS_CLUSTER_NAME
-
-      # Redeploys helm chart
-      - name: Deploy Helm chart
-        run: |
-          cd notebook2rest
-          helm upgrade --install my-api templates/helm --namespace default --set image.repository=259361438396.dkr.ecr.eu-north-1.amazonaws.com/notebook2rest/api --set image.tag=$IMAGE_TAG
-         # helm upgrade --install my-api templates/helm --namespace default --set image.repository=$REGISTRY/$REPOSITORY --set image.tag=$IMAGE_TAG
+    # Redeploys helm chart
+    - name: Deploy Helm chart
+      shell: bash
+      env:
+        REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        REPOSITORY: ${{inputs.ecr_repository}}
+        IMAGE_TAG: ${{ github.sha }}-${{ github.run_number }}
+      run: |
+        cd notebook2rest
+        helm upgrade --install my-api templates/helm --namespace default --set image.repository=259361438396.dkr.ecr.eu-north-1.amazonaws.com/notebook2rest/api --set image.tag=$IMAGE_TAG
