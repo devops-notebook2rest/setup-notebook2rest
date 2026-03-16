@@ -41,7 +41,7 @@ jobs:
         uses: actions/checkout@v4
         
       - name: Build and Deploy API
-        uses: your-username/your-repo-name@v1
+        uses: devops-notebook2rest/setup-notebook2rest@v1
         with:
           aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
