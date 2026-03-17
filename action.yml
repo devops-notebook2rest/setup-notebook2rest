@@ -47,6 +47,16 @@ runs:
         cd notebook2rest
         python3 src/main.py ..
 
+    - name: Inject custom requirements
+      shell: bash
+      run: |
+        if [ -f "n2r_requirements.txt" ]; then
+          echo "Injecting custom dependencies..."
+          cat n2r_requirements.txt >> notebook2rest/build/requirements.txt
+        else
+          echo "Proceeding with templated dependencies."
+        fi
+
     # AWS setup
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v4
@@ -90,4 +100,4 @@ runs:
         IMAGE_TAG: ${{ github.sha }}-${{ github.run_number }}
       run: |
         cd notebook2rest
-        helm upgrade --install my-api templates/helm --namespace default --set image.repository=259361438396.dkr.ecr.eu-north-1.amazonaws.com/notebook2rest/api --set image.tag=$IMAGE_TAG
+        helm upgrade --install my-api templates/helm --namespace default --set image.repository=$REGISTRY/$REPOSITORY --set image.tag=$IMAGE_TAG
