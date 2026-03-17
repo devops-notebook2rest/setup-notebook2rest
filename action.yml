@@ -52,6 +52,7 @@ runs:
       run: |
         if [ -f "n2r_requirements.txt" ]; then
           echo "Injecting custom dependencies..."
+          echo "" >> notebook2rest/build/requirements.txt
           cat n2r_requirements.txt >> notebook2rest/build/requirements.txt
         else
           echo "Proceeding with templated dependencies."
