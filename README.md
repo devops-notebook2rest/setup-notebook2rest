@@ -2,6 +2,10 @@
 
 Converts a repository of Jupyter Notebooks into a production-ready FastAPI application, containerizes it, and deploys it to your AWS EKS (Elastic Kubernetes Service) cluster.
 
+This composite action supports two deployment architectures:
+1. **Forking Mode:** Runs directly inside a Jupyter Notebook repository via workflow.
+2. **Polling Mode:** Runs from a centralized infrastructure repository, cloning remote notebook repositories on demand.
+
 ## How it Works
 
 Under the hood, this Composite Action performs the following steps:
@@ -20,7 +24,9 @@ Before using this Action, ensure declaring the following parameters:
 * `aws_secret_access_key` : Your AWS Secret Access Key. Pass this securely via `${{ secrets.YOUR_SECRET }}`.
 * `aws_region` : The AWS Region where your ECR and EKS cluster reside (e.g., `eu-north-1`).
 * `eks_cluster_name` : The exact name of your target EKS Cluster.
-* `ecr_repository` : The name of your ECR repository
+* `ecr_repository` : The name of your ECR repository.
+* `notebook_repository_name` : The name of the remote repository folder (leave empty if local).
+* `notebook_repository_url` : The Git URL of the remote repository (leave empty if local).
 
 ## Injecting Custom Dependencies
 
@@ -29,6 +35,8 @@ If your Jupyter Notebooks rely on specific scientific libraries, you do not need
 Simply create a file named **`n2r_requirements.txt`** in the root of your repository and list your packages. The Action will automatically detect this file and merge your custom dependencies into the engine.
 
 ## Usage
+
+**Scenario 1: Forking mode**
 
 Create a new file in your repository at `.github/workflows/deploy.yml` and paste the following configuration:
 
@@ -55,3 +63,65 @@ jobs:
           aws_region: 'eu-north-1'
           eks_cluster_name: 'my-production-cluster'
           ecr_repository: 'my-project/api'
+```
+
+**Scenario 2 : Polling mode**
+
+```yaml
+name: Poll notebook API
+
+concurrency:
+  group: notebook2rest-pipeline
+  cancel-in-progress: true
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+env:
+  AWS_REGION: eu-north-1
+  EKS_CLUSTER_NAME: notebook2rest_cluster
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  REPOSITORY: notebook2rest/api
+  IMAGE_TAG: ${{ github.sha }}-${{ github.run_number }}
+  NOTEBOOK_REPOSITORY_NAME: vl-laserfarm # The repository name
+  NOTEBOOK_REPOSITORY_URL: https://github.com/devops-notebook2rest/vl-laserfarm.git # The repository url
+
+jobs:
+  Poll_notebook_changes:
+    runs-on: ubuntu-latest
+
+    outputs:
+      should_run: ${{ steps.poll.outputs.should_run }}
+      latest_commit: ${{ steps.poll.outputs.latest_commit }}
+
+    steps:
+      - name: Poll Notebook Repository
+        id: poll
+        uses: devops-notebook2rest/check-notebook-changes@v0.32
+        with:
+          notebook_repository_url: ${{ env.NOTEBOOK_REPOSITORY_URL }}
+
+  Build_and_deploy_N2R_API:
+    needs: Poll_notebook_changes
+    if: needs.check.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Build and deploy notebook2rest to AWS
+        uses: devops-notebook2rest/setup-notebook2rest@v1
+        with:
+          aws_access_key_id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws_secret_access_key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws_region: ${{ env.AWS_REGION }}
+          eks_cluster_name: ${{ env.EKS_CLUSTER_NAME }}
+          ecr_repository: ${{ env.REPOSITORY }}
+          notebook_repository_name: ${{ env.NOTEBOOK_REPOSITORY_NAME }}
+          notebook_repository_url: ${{ env.NOTEBOOK_REPOSITORY_URL }}
+```
