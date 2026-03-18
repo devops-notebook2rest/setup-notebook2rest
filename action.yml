@@ -25,9 +25,11 @@ inputs:
   notebook_repository_name:
     description: 'The name of the notebook repository'
     required: true
+    default: ''
   notebook_repository_url:
     description: 'The URL of the notebook repository'
     required: true
+    default: ''
 
 runs:
   using: "composite"
@@ -37,6 +39,7 @@ runs:
       uses: actions/checkout@v4
       
     - name: Retrieve the notebook repository
+      if: ${{ inputs.notebook_repository_url != '' }}
       run: |
         git clone ${{ inputs.notebook_repository_url }}
       shell: bash
@@ -61,10 +64,16 @@ runs:
     - name: Inject custom requirements
       shell: bash
       run: |
-        if [ -f "n2r_requirements.txt" ]; then
+        REPO_PATH="${{ inputs.notebook_repository_name }}"
+
+        if [ -z "$REPO_PATH" ]; then
+          REPO_PATH="."
+        fi
+        
+        if [ -f "$REPO_PATH/n2r_requirements.txt" ]; then
           echo "Injecting custom dependencies..."
           echo "" >> notebook2rest/build/requirements.txt
-          cat n2r_requirements.txt >> notebook2rest/build/requirements.txt
+          cat "$REPO_PATH/n2r_requirements.txt" >> notebook2rest/build/requirements.txt
         else
           echo "Proceeding with templated dependencies."
         fi
