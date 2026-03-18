@@ -22,6 +22,12 @@ inputs:
     description: 'The ECR repository name'
     required: true
     default: 'notebook2rest/api'
+  notebook_repository_name:
+    description: 'The name of the notebook repository'
+    required: true
+  notebook_repository_url:
+    description: 'The URL of the notebook repository'
+    required: true
 
 runs:
   using: "composite"
@@ -29,7 +35,12 @@ runs:
   steps:
     - name: Checkout notebook repository
       uses: actions/checkout@v4
-
+      
+    - name: Retrieve the notebook repository
+      run: |
+        git clone ${{ inputs.notebook_repository_url }}
+      shell: bash
+  
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
@@ -45,7 +56,7 @@ runs:
       shell: bash
       run: |
         cd notebook2rest
-        python3 src/main.py ..
+        python3 src/main.py ../${{ inputs.notebook_repository_name }}
 
     - name: Inject custom requirements
       shell: bash
